@@ -3,6 +3,7 @@ import getpass
 import time
 import logging
 import time
+import os
 from pathlib import Path
 from pprint import pprint
 
@@ -88,10 +89,16 @@ def download_event(cam: RingStickUpCam, eid, recordingDate):
     retries = 0
     video_path = Path(f'videos/{cam.name}')
     video_path.mkdir(parents=True, exist_ok=True)
+    file_path = video_path / f'{eid}_{recordingDate}.mp4'
 
+    # Check if file already exists
+    if os.path.isfile(file_path):
+        print(f"Skipping download for {eid}_{recordingDate}.mp4 as it already exists.")
+        return True
+    
     while retries < MAX_RETRIES:
         try:
-            cam.recording_download(eid, filename=video_path/f'{eid}_{recordingDate}.mp4')
+            cam.recording_download(eid, filename=file_path)
             return True
         except Exception as e:
             if '404' in str(e):
