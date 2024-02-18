@@ -4,6 +4,7 @@ import time
 import logging
 import time
 import os
+import threading
 from pathlib import Path
 from pprint import pprint
 
@@ -13,9 +14,9 @@ from oauthlib.oauth2 import MissingTokenError
 
 # Constants
 STARTING_FROM_DING_ID = 7270130651641920309 # August 22, 8:59 AM, Beginning of digging
-STOP_AT_DING_ID = 7270294388680145717 # Aug 22, Last Video # 7277219435034426165 <- Continue at CLOSE TO Sep 10, 3:28:05 PM. # Continue at 7333246501726698293 after reaching safe date buffer. OUTDATED BUT CLOSE TO: February 9, 11:32 AM, Enclosed extension
+STOP_AT_DING_ID = 7270294388680145717 # Aug 22, Last video of day # 7277219435034426165 <- Continue at CLOSE TO Sep 10, 3:28:05 PM. # Continue at 7333246501726698293 after reaching safe date buffer. OUTDATED BUT CLOSE TO: February 9, 11:32 AM, Enclosed extension
 CAM_NAME = "High from Garage"
-CHUNK_SIZE = 8192
+CHUNK_SIZE = 50
 MAX_RETRIES = 50
 CACHE_FILE_PATH = Path("token.cache")
 USER_AGENT = "ConstructionTimelapser/1.0"
@@ -66,6 +67,8 @@ def download(cam: RingStickUpCam):
         recording_count = len(events)
         print(f'Found recordings count: {recording_count}')
 
+        threads = []  # Create a list to store threads
+
         # Loop through the events and download each video (newest -> oldest)
         for event in events:
             eid = event['id']
@@ -76,12 +79,14 @@ def download(cam: RingStickUpCam):
                 print(f'Reached the oldest event for {cam.name}!')
                 return
 
-            success = download_event(cam, eid, date)
-            if success:
-                count += 1
-                print(f'Downloaded #{count} -> {eid}')
-                # Delay between downloads
-                time.sleep(1)
+            # Create a new thread for each download
+            thread = threading.Thread(target=download_event, args=(cam, eid, date))
+            threads.append(thread)
+            thread.start()
+
+        # Wait for all threads to finish
+        for thread in threads:
+            thread.join()
 
 
 def download_event(cam: RingStickUpCam, eid, recordingDate):
@@ -93,9 +98,9 @@ def download_event(cam: RingStickUpCam, eid, recordingDate):
 
     # Check if file already exists
     if os.path.isfile(file_path):
-        print(f"Skipping download for {eid}_{recordingDate}.mp4 as it already exists.")
+        print(f"- Skipping download for {eid}_{recordingDate}.mp4 as it already exists.")
         return True
-    
+
     while retries < MAX_RETRIES:
         try:
             cam.recording_download(eid, filename=file_path)
