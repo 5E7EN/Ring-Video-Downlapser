@@ -69,7 +69,7 @@ def download(cam: RingStickUpCam):
         # Loop through the events and download each video (newest -> oldest)
         for event in events:
             eid = event['id']
-            date = event['created_at'].strftime("%Y_%m_%d-%H_%M_%S")
+            date = event['created_at'].astimezone().strftime("%Y_%m_%d-%H_%M_%S")
             print(f'Downloading recording: {eid} @ {date}')
 
             if eid < STARTING_FROM_DING_ID:
