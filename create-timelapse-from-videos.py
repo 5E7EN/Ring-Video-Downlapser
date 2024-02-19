@@ -25,11 +25,20 @@ def ensure_directories_exist():
 
 def get_video_files(directory):
     """Retrieve sorted video files from a given directory."""
+    def sort_key(filename):
+        # Extract the part of the filename before the first underscore
+        # and try to convert it to an integer.
+        # If the filename doesn't follow the expected pattern, catch the exception
+        # and return 0 or some default value.
+        try:
+            return int(filename.split('_')[0])
+        except ValueError:
+            return 0  # or some other value that makes sense for your sorting
+    
     return sorted(
         [f for f in os.listdir(directory) if f.endswith('.mp4')],
-        key=lambda x: int(os.path.splitext(x)[0]),
+        key=sort_key,
     )
-
 
 def extract_frames_from_videos(video_files):
     """Extract frames every N seconds from each video."""
