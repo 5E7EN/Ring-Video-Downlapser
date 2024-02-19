@@ -1,6 +1,8 @@
 import os
 import subprocess
 import time
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import Manager
 
 # Constants
 DIR_PATH = os.path.dirname(os.path.realpath(__file__))
@@ -26,50 +28,65 @@ def ensure_directories_exist():
 def get_video_files(directory):
     """Retrieve sorted video files from a given directory."""
     def sort_key(filename):
-        # Extract the part of the filename before the first underscore
-        # and try to convert it to an integer.
-        # If the filename doesn't follow the expected pattern, catch the exception
-        # and return 0 or some default value.
         try:
             return int(filename.split('_')[0])
         except ValueError:
-            return 0  # or some other value that makes sense for your sorting
+            return 0
     
     return sorted(
         [f for f in os.listdir(directory) if f.endswith('.mp4')],
         key=sort_key,
     )
 
-def extract_frames_from_videos(video_files):
-    """Extract frames every N seconds from each video."""
-    for idx, video_file in enumerate(video_files):
-        input_path = os.path.join(INPUT_VIDEOS_DIRECTORY, video_file)
-        output_path = os.path.join(OUTPUT_FRAMES_DIRECTORY, f"frame_{idx:04}_%04d.jpg")
 
-        print(f'{idx + 1}/{len(video_files)} - Extracting frames from {video_file}')
+def extract_frame_from_video(video_file, idx, total_videos, input_directory, output_directory, extract_frame_every_n_seconds, progress_counter, progress_lock):
+    """Extract frames every N seconds from a single video, with progress logging."""
+    input_path = os.path.join(input_directory, video_file)
+    output_path = os.path.join(output_directory, f"frame_{idx:05}_%04d.jpg")
 
-        command = [
-            'ffmpeg', 
-            '-loglevel', 'error',
-            '-i', input_path,
-            '-vf', f'fps=1/{EXTRACT_FRAME_EVERY_N_SECONDS}',
-            output_path
+    command = [
+        'ffmpeg',
+        '-loglevel', 'error',
+        '-i', input_path,
+        '-vf', f'fps=1/{extract_frame_every_n_seconds}',
+        output_path
+    ]
+    subprocess.call(command)
+    
+    with progress_lock:
+        progress_counter.value += 1
+        print(f'Progress: [{progress_counter.value}/{total_videos}] {video_file} processed.')
+
+
+def extract_frames_from_videos_parallel(video_files, input_directory, output_directory, extract_frame_every_n_seconds):
+    """Extract frames from videos in parallel with progress logging."""
+    total_videos = len(video_files)
+    manager = Manager()
+    progress_counter = manager.Value('i', 0)
+    progress_lock = manager.Lock()
+    
+    with ProcessPoolExecutor() as executor:
+        futures = [
+            executor.submit(extract_frame_from_video, video_file, idx, total_videos, input_directory, output_directory, extract_frame_every_n_seconds, progress_counter, progress_lock)
+            for idx, video_file in enumerate(video_files)
         ]
-        subprocess.call(command)
+        for future in futures:
+            future.result()
 
 
 def combine_frames_into_timelapse():
     """Combine frames to create the timelapse video."""
     with open(FRAMES_META_PATH, "w") as f:
         frames = sorted(
-            [frame for frame in os.listdir(OUTPUT_FRAMES_DIRECTORY) if frame.endswith(".jpg")]
+            [frame for frame in os.listdir(OUTPUT_FRAMES_DIRECTORY) if frame.endswith(".jpg")],
+            key=lambda x: (int(x.split('_')[1]), int(x.split('_')[2].split('.')[0]))
         )
 
         for frame in frames:
             f.write(f"file '{os.path.join(OUTPUT_FRAMES_DIRECTORY, frame)}'\n")
 
     command = [
-        'ffmpeg', 
+        'ffmpeg',
         '-f', 'concat',
         '-r', str(TIMELAPSE_FPS),
         '-safe', '0',
@@ -88,7 +105,7 @@ def main():
     print(f"Found {len(video_files)} video files.")
 
     start_time = time.time()
-    extract_frames_from_videos(video_files)
+    extract_frames_from_videos_parallel(video_files, INPUT_VIDEOS_DIRECTORY, OUTPUT_FRAMES_DIRECTORY, EXTRACT_FRAME_EVERY_N_SECONDS)
     end_time = time.time()
     print(f"Extracted all frames in {end_time - start_time:.2f} seconds.")
     
