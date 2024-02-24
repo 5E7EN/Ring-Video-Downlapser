@@ -13,8 +13,8 @@ OUTPUT_VIDEOS_DIRECTORY = os.path.join(VIDEOS_PATH, 'output')
 FRAMES_META_PATH = os.path.join(OUTPUT_FRAMES_DIRECTORY, 'frames.txt')
 OUTPUT_TIMELAPSE_PATH = os.path.join(OUTPUT_VIDEOS_DIRECTORY, 'timelapse.mp4')
 
-EXTRACT_FRAME_EVERY_N_SECONDS = 15
-TIMELAPSE_FPS = 30
+EXTRACT_FRAME_TIME_OFFSET = 15
+TIMELAPSE_FPS = 24
 
 
 def ensure_directories_exist():
@@ -39,16 +39,17 @@ def get_video_files(directory):
     )
 
 
-def extract_frame_from_video(video_file, idx, total_videos, input_directory, output_directory, extract_frame_every_n_seconds, progress_counter, progress_lock):
-    """Extract frames every N seconds from a single video, with progress logging."""
+def extract_frame_from_video(video_file, idx, total_videos, input_directory, output_directory, extract_frame_time_offset, progress_counter, progress_lock):
+    """Extract a single frame at a specified time offset from a single video, with progress logging."""
     input_path = os.path.join(input_directory, video_file)
-    output_path = os.path.join(output_directory, f"frame_{idx:05}_%04d.jpg")
+    output_path = os.path.join(output_directory, f"frame_{idx:05}.jpg")
 
     command = [
         'ffmpeg',
         '-loglevel', 'error',
         '-i', input_path,
-        '-vf', f'fps=1/{extract_frame_every_n_seconds}',
+        '-ss', str(extract_frame_time_offset),  # Seek to the offset before extracting
+        '-frames:v', '1',  # Extract only one frame
         output_path
     ]
     subprocess.call(command)
@@ -57,22 +58,21 @@ def extract_frame_from_video(video_file, idx, total_videos, input_directory, out
         progress_counter.value += 1
         print(f'Progress: [{progress_counter.value}/{total_videos}] {video_file} processed.')
 
-
-def extract_frames_from_videos_parallel(video_files, input_directory, output_directory, extract_frame_every_n_seconds):
-    """Extract frames from videos in parallel with progress logging."""
-    total_videos = len(video_files)
+def extract_frames_from_videos_parallel(video_files, input_directory, output_directory, extract_frame_time_offset):
+    """Extract frames from selected videos in parallel with progress logging."""
+    selected_video_files = video_files[::2]  # Select every other video
+    total_videos = len(selected_video_files)
     manager = Manager()
     progress_counter = manager.Value('i', 0)
     progress_lock = manager.Lock()
     
     with ProcessPoolExecutor() as executor:
         futures = [
-            executor.submit(extract_frame_from_video, video_file, idx, total_videos, input_directory, output_directory, extract_frame_every_n_seconds, progress_counter, progress_lock)
-            for idx, video_file in enumerate(video_files)
+            executor.submit(extract_frame_from_video, video_file, idx, total_videos, input_directory, output_directory, extract_frame_time_offset, progress_counter, progress_lock)
+            for idx, video_file in enumerate(selected_video_files)
         ]
         for future in futures:
             future.result()
-
 
 def combine_frames_into_timelapse():
     """Combine frames to create the timelapse video."""
@@ -105,7 +105,7 @@ def main():
     print(f"Found {len(video_files)} video files.")
 
     start_time = time.time()
-    extract_frames_from_videos_parallel(video_files, INPUT_VIDEOS_DIRECTORY, OUTPUT_FRAMES_DIRECTORY, EXTRACT_FRAME_EVERY_N_SECONDS)
+    extract_frames_from_videos_parallel(video_files, INPUT_VIDEOS_DIRECTORY, OUTPUT_FRAMES_DIRECTORY, EXTRACT_FRAME_TIME_OFFSET)
     end_time = time.time()
     print(f"Extracted all frames in {end_time - start_time:.2f} seconds.")
     
