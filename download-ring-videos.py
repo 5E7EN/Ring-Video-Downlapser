@@ -4,7 +4,7 @@ import time
 import logging
 import time
 import os
-import threading
+import concurrent.futures
 from pathlib import Path
 from pprint import pprint
 
@@ -13,16 +13,17 @@ from ring_doorbell import Ring, Auth, RingStickUpCam
 from oauthlib.oauth2 import MissingTokenError
 
 # Constants
-STARTING_FROM_DING_ID = 7270130651641920309 # August 22, 8:59 AM, Beginning of digging
-STOP_AT_DING_ID = 7270294388680145717 # Aug 22, Last video of day # 7277219435034426165 <- Continue at CLOSE TO Sep 10, 3:28:05 PM. # Continue at 7333246501726698293 after reaching safe date buffer. OUTDATED BUT CLOSE TO: February 9, 11:32 AM, Enclosed extension
-CAM_NAME = "High from Garage"
-CHUNK_SIZE = 50
-MAX_RETRIES = 50
+STARTING_FROM_DING_ID = 0
+STOP_AT_DING_ID = 0
+CAM_NAME = ""
+CHUNK_SIZE = 10000
+MAX_THREADS = 10
 CACHE_FILE_PATH = Path("token.cache")
-USER_AGENT = "ConstructionTimelapser/1.0"
+USER_AGENT = "RingTimelapser/1.0"
+MAX_RETRIES = 50
 RETRY_SLEEP_TIME = 5
 
-logging.getLogger('ring_doorbell').setLevel(logging.DEBUG)
+logging.getLogger('ring_doorbell').setLevel(logging.INFO)
 
 
 def token_updated(token):
@@ -55,7 +56,7 @@ def initialize_auth():
 
 
 def download(cam: RingStickUpCam):
-    """Download videos from a camera."""
+    """Download videos from a camera with thread pool to limit max threads."""
     count = 0
     eid = STOP_AT_DING_ID
 
@@ -65,29 +66,35 @@ def download(cam: RingStickUpCam):
 
         # Get amount of recordings
         recording_count = len(events)
-        print(f'Found recordings count: {recording_count}')
+        logging.info(f'Found {recording_count} recordings.')
 
-        threads = []  # Create a list to store threads
+        if recording_count == 0:
+            logging.info("No more recordings found.")
+            break
 
-        # Loop through the events and download each video (newest -> oldest)
-        for event in events:
-            eid = event['id']
-            date = event['created_at'].astimezone().strftime("%Y_%m_%d-%H_%M_%S")
-            print(f'Downloading recording: {eid} @ {date}')
+        # Download events using ThreadPoolExecutor to manage concurrency
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
+            # Prepare the tasks
+            tasks = {executor.submit(download_event, cam, event['id'], event['created_at'].astimezone().strftime("%Y_%m_%d-%H_%M_%S")): event for event in events}
+            
+            for future in concurrent.futures.as_completed(tasks):
+                eid = tasks[future]['id']
+                try:
+                    success = future.result()
+                    if success:
+                        logging.info(f'Successfully downloaded recording: {eid}')
+                    else:
+                        logging.error(f'Failed to download recording: {eid}')
+                except Exception as exc:
+                    logging.error(f'An error occurred while downloading recording: {eid}. Error: {exc}')
 
-            if eid < STARTING_FROM_DING_ID:
-                print(f'Reached the oldest event for {cam.name}!')
-                return
+                # Update eid to fetch older events in the next iteration
+                if eid < STARTING_FROM_DING_ID:
+                    logging.info(f'Reached the oldest event for {cam.name}!')
+                    return
 
-            # Create a new thread for each download
-            thread = threading.Thread(target=download_event, args=(cam, eid, date))
-            threads.append(thread)
-            thread.start()
-
-        # Wait for all threads to finish
-        for thread in threads:
-            thread.join()
-
+                # Add a delay between each thread execution
+                time.sleep(1)  # Adjust delay time as needed
 
 def download_event(cam: RingStickUpCam, eid, recordingDate):
     """Attempt to download a specific event. Returns True if successful."""
@@ -103,6 +110,7 @@ def download_event(cam: RingStickUpCam, eid, recordingDate):
 
     while retries < MAX_RETRIES:
         try:
+            print(f"[-] Downloading {eid}...")
             cam.recording_download(eid, filename=file_path)
             return True
         except Exception as e:
