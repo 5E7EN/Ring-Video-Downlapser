@@ -1,4 +1,0 @@
-Time to extract video frames using ffmpeg:
-
-- `-r 0.0666` - 99.48 seconds, 97.50 seconds
-- -vf 'fps=1/15'` - 51.33 seconds, 50.78 seconds
